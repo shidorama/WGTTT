@@ -1,7 +1,6 @@
 from copy import deepcopy
+from settings import CIRCLE, CROSS
 
-CIRCLE = 'o'
-CROSS = 'x'
 
 
 class Field(object):
@@ -14,6 +13,7 @@ class Field(object):
     def __init__(self, size):
         self._field = [[None for i in range(size)] for x in range(size)]
         self._size = size
+        self._free_cells = size*size
         pass
 
     def get_row(self, number):
@@ -46,11 +46,16 @@ class Field(object):
         if self._field[y][x] is not None:
             return False
         self._field[y][x] = sign
+        self._free_cells -= 1
         return True
 
     @property
     def field(self):
         return deepcopy(self._field)
+
+    @property
+    def is_full(self):
+        return self._free_cells == 0
 
     @property
     def size(self):
@@ -88,10 +93,10 @@ class Rules(object):
                 return False
         return True
 
-
 class Game(object):
     GAME = 0
     WIN = 1
+    TIE = 2
 
     def __init__(self):
         self.__board = Field(3)
@@ -101,7 +106,11 @@ class Game(object):
         self.__state = self.GAME
 
     @property
-    def current_move(self):
+    def board(self):
+        return self.__board.field
+
+    @property
+    def last_move(self):
         return self.__last_move
 
     def place_cross(self, x, y):
@@ -122,7 +131,16 @@ class Game(object):
             return False
         if self.__rules.check_win_from_move(self.__board, x, y):
             self.__win_by = sign
+            self.__state = self.WIN
+        elif self.__board.is_full:
+            self.__state = self.TIE
         self.__last_move = sign
+        return True
 
-    def is_win_by(self):
+    @property
+    def state(self):
+        return self.__state
+    
+    @property
+    def winner(self):
         return self.__win_by
