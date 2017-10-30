@@ -1,18 +1,15 @@
-import uuid
+from collections import deque
+from json import dumps, loads
+from time import time
 
+from twisted.internet import reactor
+from twisted.internet.protocol import ServerFactory, connectionDone
+from twisted.protocols.basic import LineReceiver
 from voluptuous import ExactSequence, Schema, MultipleInvalid
 
 import settings
-from twisted.internet import reactor, task
-from twisted.protocols.basic import LineReceiver
-from twisted.internet.protocol import ServerFactory, connectionDone
-from base64 import b64decode, b64encode
-from json import dumps, loads
-from collections import deque
-from time import time
-
-from user import user_mananger, User
 from game import Game, GameAI
+from user import user_mananger
 
 users = {}
 user_protocols = {}
@@ -24,6 +21,7 @@ class CQueue(deque):
 
     def isEmpty(self):
         return len(self) == 0
+
 
 class TTTServer(LineReceiver):
     GAME_STATE_IDLE = 0
@@ -44,8 +42,10 @@ class TTTServer(LineReceiver):
         pass
 
     def connectionLost(self, reason=connectionDone):
-        if self.__game_state == self.GAME_STATE_PLAYING:
+        if self.__game_state in [self.GAME_STATE_PLAYING, self.GAME_STATE_QUEUE]:
             game_manager.drop_player(self.user.user_id)
+        if self.authorized:
+            user_mananger.protocols.pop(self.user.user_id)
 
     @staticmethod
     def packet_prepare(raw_data):
@@ -64,7 +64,7 @@ class TTTServer(LineReceiver):
     def lineReceived(self, line):
         data = self.packet_prepare(line)
         if data is False or not isinstance(data, dict):
-            self.send_error(True)
+            return self.send_error(True)
         self.proto_reactor(data)
 
     def proto_reactor(self, packet):
@@ -78,8 +78,6 @@ class TTTServer(LineReceiver):
         if self.__game_state == self.GAME_STATE_QUEUE and self.authorized:
             self.__game_state = self.GAME_STATE_PLAYING
             self.responder(state)
-
-
 
     def game_reactor(self, command, packet):
         if self.__game_state == self.GAME_STATE_IDLE:
@@ -135,7 +133,7 @@ class TTTServer(LineReceiver):
             result = {'cmd': 'reg', 'success': True, 'user_id': user.user_id}
             self.authorized = True
             self.__game_state = self.GAME_STATE_IDLE
-            self.user = result
+            self.user = user
             self.responder(result)
         else:
             self.send_error(True)
@@ -155,15 +153,14 @@ class TTTServer(LineReceiver):
         self.__game_state = self.GAME_STATE_IDLE
 
 
-
-
 class GameManager():
     def __init__(self):
         self.queue = CQueue()
         self.command_queue = CQueue()
         self.__game = None
         self.__players = {}
-        self.__ai_active = False
+        self.__ai_countdown_started = None
+        self.__ai_countdown_task = None
 
     def queue_user(self, user):
         # Check if there are more users and if they're not playing to start immediately
@@ -175,14 +172,25 @@ class GameManager():
         if self.__game or self.queue.isEmpty():
             return False
         if len(self.queue) > 1:
+            self.reset_ai_timer()
             self.__players = {settings.CROSS: self.queue.pop(), settings.CIRCLE: self.queue.pop()}
             self.__game = Game()
             game_state = self.game_state
             for player_sign in self.__players:
                 game_state['your_type'] = player_sign
                 self.__players[player_sign].protocol.start_game(game_state)
-        else:
-            self.start_ai_game()
+        elif len(self.queue) and not self.__game:
+            self.start_ai_timer()
+
+    def start_ai_timer(self):
+        self.__ai_countdown_started = time()
+        self.__ai_countdown_task = reactor.callLater(settings.WAIT_TIMEOUT, self.start_ai_game)
+
+    def reset_ai_timer(self):
+        if self.__ai_countdown_task:
+            self.__ai_countdown_started = None
+            self.__ai_countdown_task.cancel()
+            self.__ai_countdown_task = None
 
     def make_move(self, user_id, x, y):
         for sign, player in self.__players.iteritems():
@@ -212,7 +220,6 @@ class GameManager():
             self.update_stats(self.__game.winner)
             self.endgame()
 
-
         pass
 
     def update_stats(self, winner):
@@ -240,11 +247,12 @@ class GameManager():
             return True
 
     def start_ai_game(self):
-        self.__players = {settings.CROSS: self.queue.pop(), settings.CIRCLE: GameAI(self.make_move)}
-        self.__game = Game()
-        game_state = self.game_state
-        game_state['your_type'] = settings.CROSS
-        self.__players[settings.CROSS].protocol.start_game(game_state)
+        if not self.__game and len(self.queue) == 1:
+            self.__players = {settings.CROSS: self.queue.pop(), settings.CIRCLE: GameAI(self.make_move)}
+            self.__game = Game()
+            game_state = self.game_state
+            game_state['your_type'] = settings.CROSS
+            self.__players[settings.CROSS].protocol.start_game(game_state)
 
     @property
     def game_state(self):
@@ -263,28 +271,35 @@ class GameManager():
         return return_schema
 
     def drop_player(self, user_id):
-        loses = None
-        for sign, player in self.__players.iteritems():
-            if user_id == player.user_id:
-                loses = sign
-        winner = settings.CROSS
-        if loses == settings.CROSS:
-            winner = settings.CIRCLE
-        self.update_stats(winner)
-        if not isinstance(self.__players[winner], GameAI):
-            state = self.game_state
-            state['winner'] = winner
-            state['your_type'] = winner
-            state['ended'] = True
-            self.__players[winner].protocol.send_game_update(state)
-        self.endgame()
-
-
-
+        user = user_mananger.users.get(user_id)
+        if not user:
+            return False
+        if user in self.queue:
+            self.queue.remove(user)
+        else:
+            playing = False
+            loses = None
+            for sign, player in self.__players.iteritems():
+                if user_id == player.user_id:
+                    playing = True
+                    loses = sign
+            if playing:
+                winner = settings.CROSS
+                if loses == settings.CROSS:
+                    winner = settings.CIRCLE
+                self.update_stats(winner)
+                if not isinstance(self.__players[winner], GameAI):
+                    state = self.game_state
+                    state['winner'] = winner
+                    state['your_type'] = winner
+                    state['ended'] = True
+                    self.__players[winner].protocol.send_game_update(state)
+                self.endgame()
 
 
 class VirtualPlayer():
     pass
+
 
 if __name__ == '__main__':
     game_manager = GameManager()
