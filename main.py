@@ -96,8 +96,9 @@ class TTTServer(LineReceiver):
                 raw_pos = packet.get('pos')
                 position = self.check_data(raw_pos, schema)
                 if position is False:
-                    return self.cmd_state(command)
-                game_manager.make_move(self.user.user_id, *position)
+                    return self.responder(self.__game_state_data)
+                if not game_manager.make_move(self.user.user_id, *position):
+                    return self.responder(self.__game_state_data)
             elif command == 'game':
                 pass
             pass
@@ -199,7 +200,6 @@ class GameManager():
                     new_state = self.game_state
                     new_state['your_type'] = sign
                     self.broadcast_update(new_state)
-
                     return True
         return False
 
@@ -225,7 +225,7 @@ class GameManager():
     def update_stats(self, winner):
         if winner is None:
             for player in self.__players.values():
-                player.tie += 1
+                player.ties += 1
         elif winner == settings.CIRCLE:
             self.__players[settings.CIRCLE].wins += 1
             self.__players[settings.CROSS].loses += 1
@@ -260,6 +260,7 @@ class GameManager():
             return False
         game_ended = not (self.__game.state == Game.GAME)
         return_schema = {
+            "cmd": "state",
             "field": self.__game.board,
             "player_x": {"name": self.__players[settings.CROSS].name, "stats": self.__players[settings.CROSS].stats},
             "player_o": {"name": self.__players[settings.CIRCLE].name, "stats": self.__players[settings.CIRCLE].stats},

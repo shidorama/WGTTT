@@ -12,7 +12,7 @@ class TextTooLongError(Exception):
     pass
 
 CREDENTIALS = 'creds.json'
-DEBUG = True
+DEBUG = False
 
 class TTTClient(LineReceiver):
     STATE_AUTH = 0
@@ -32,7 +32,8 @@ class TTTClient(LineReceiver):
         :type str:
         :return:
         """
-        self.__screen.addLine('Got input "%s", len: %s'%(command, len(command)))
+        if DEBUG:
+            self.__screen.addLine('Got input "%s", len: %s'%(command, len(command)))
         if self.state == self.STATE_IDLE:
             if command.upper() == 'Q':
                 net_cmd = {"cmd": "queue"}
@@ -115,7 +116,8 @@ class TTTClient(LineReceiver):
                     self.__screen.addLine(message)
                     self.stats = data.get('player_%s'%your_sign).get('stats')
                     self.state = self.STATE_IDLE
-                    self.idle_message(self.stats)
+                    self.idle_message()
+                    self.__screen.set_status_idle(self.stats)
 
     def should_i_move(self, data):
         if data.get('your_type') != data.get('last_turn'):
@@ -287,7 +289,7 @@ class Screen(CursesStdIO):
         self.redisplayLines()
 
     def set_status_idle(self, stats):
-        self.__screen.statusText = 'State: authorized. Your stats: W-{:.2%}, L-{:.2%}, T-{:.2%}'.format(*stats)
+        self.statusText = 'State: authorized. Your stats: W-{:.2%}, L-{:.2%}, T-{:.2%}'.format(*stats)
         self.redisplayLines()
 
     def close(self):
