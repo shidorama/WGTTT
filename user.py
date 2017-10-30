@@ -8,6 +8,11 @@ from pickle import dump, load
 
 class User(object):
     def __init__(self, user_id):
+        """As we're using pickle -> we can store all the data in classes and access it directly
+
+        If there every will be need for upgrade to full-fledged DB - we can use it with little to no modifications
+        :param user_id:
+        """
         self.wins = 0
         self.loses = 0
         self.ties = 0
@@ -16,10 +21,18 @@ class User(object):
 
     @property
     def protocol(self):
+        """Gets twisted protocol instance from user_manager
+
+        :return:
+        """
         return user_mananger.protocols.get(self.__id)
 
     @property
     def stats(self):
+        """Get user gaming stats as a list
+
+        :return:
+        """
         win_ratio = 0
         lose_ratio = 0
         tie_ratio = 0
@@ -41,7 +54,7 @@ class User(object):
         return self.__id
 
     def exit(self):
-        pass
+        self.protocol.transport.loseConnection()
 
 
 class UserManager(object):
@@ -57,6 +70,10 @@ class UserManager(object):
         return False
 
     def load_users(self):
+        """Tries to load users from pickle file if it exists and non-empty
+
+        :return:
+        """
         if os.path.exists(settings.DB_FILE):
             if os.path.getsize(settings.DB_FILE) > 0:
                 with open(settings.DB_FILE, 'rb') as fp:
@@ -77,6 +94,11 @@ class UserManager(object):
                 raise
 
     def register_new_user(self, protocol):
+        """creates new user, authorizes it and adds it to current db
+
+        :param protocol:
+        :return:
+        """
         user_id = uuid.uuid1().hex
         user = User(user_id)
         self.users[user_id] = user
@@ -84,27 +106,34 @@ class UserManager(object):
         self.auth_user(user_id, protocol)
         return user
 
-    def auth_user(self, user_id, protocol):
+    def auth_user(self, user_id, proto):
+        """Adds user to lobby. If same user already logged in - disconnects older one
+
+        :param user_id:
+        :param protocol:
+        :return:
+        """
         if user_id not in self.users:
             return False
         if user_id in self.__lobby:
-            self.users[user_id].exit()
-            self.__lobby.remove(user_id)
-        self.protocols[user_id] = protocol
+            self.users[user_id].protocol.loseConnection()
+        self.protocols[user_id] = proto
         self.__lobby.add(user_id)
         return self.users[user_id]
 
-    def expunge_user(self, user_id):
-        if user_id in self.__lobby:
-            self.__lobby.remove(user_id)
-            self.users[user_id].exit()
-            return True
-        return False
 
     def remove_user(self, user_id):
+        """Removes user from lobby -> currently online users (not used now)
+
+        :param user_id:
+        :return:
+        """
         if user_id in self.__lobby:
             self.__lobby.remove(user_id)
             return True
         return False
 
-user_mananger = UserManager()
+try:
+    user_mananger
+except NameError:
+    user_mananger = UserManager()

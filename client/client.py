@@ -1,24 +1,28 @@
-import os
-from twisted.protocols.basic import LineReceiver
-from twisted.internet.protocol import ClientCreator, ClientFactory, connectionDone
-from twisted.internet import reactor
-
 import curses
 import curses.wrapper
-
 from json import load, dump, loads, dumps
+
+import os
+import sys
+from twisted.internet import reactor
+from twisted.internet.protocol import ClientFactory, connectionDone
+from twisted.protocols.basic import LineReceiver
+
 
 class TextTooLongError(Exception):
     pass
 
+
 CREDENTIALS = 'creds.json'
 DEBUG = False
+
 
 class TTTClient(LineReceiver):
     STATE_AUTH = 0
     STATE_IDLE = 1
     STATE_QUEUE = 2
     STATE_GAME = 3
+
     def __init__(self, screen):
         self.state = self.STATE_AUTH
         self.__screen = screen
@@ -33,7 +37,7 @@ class TTTClient(LineReceiver):
         :return:
         """
         if DEBUG:
-            self.__screen.addLine('Got input "%s", len: %s'%(command, len(command)))
+            self.__screen.addLine('Got input "%s", len: %s' % (command, len(command)))
         if self.state == self.STATE_IDLE:
             if command.upper() == 'Q':
                 net_cmd = {"cmd": "queue"}
@@ -49,7 +53,6 @@ class TTTClient(LineReceiver):
 
     def connectionLost(self, reason=connectionDone):
         self.__screen.addLine('Connection lost! Restart client')
-
 
     def connectionMade(self):
         creds = self.get_credentials()
@@ -70,7 +73,7 @@ class TTTClient(LineReceiver):
                 if user_id:
                     self.save_credentials(user_id)
                 self.state = self.STATE_IDLE
-                self.stats = [0,0,0]
+                self.stats = [0, 0, 0]
                 self.__screen.addLine('Registered!')
             elif command == 'auth':
                 self.state = self.STATE_IDLE
@@ -114,7 +117,7 @@ class TTTClient(LineReceiver):
                     else:
                         message = 'You lose.'
                     self.__screen.addLine(message)
-                    self.stats = data.get('player_%s'%your_sign).get('stats')
+                    self.stats = data.get('player_%s' % your_sign).get('stats')
                     self.state = self.STATE_IDLE
                     self.idle_message()
                     self.__screen.set_status_idle(self.stats)
@@ -136,8 +139,8 @@ class TTTClient(LineReceiver):
         return val
 
     def draw_field(self, field):
-        delimiter ='    -*-*-*-'
-        header =   '     |0|1|2'
+        delimiter = '    -*-*-*-'
+        header = '     |0|1|2'
         lines = []
         for i, val in enumerate(field):
             v = map(self.prepare_field_row, val)
@@ -177,6 +180,7 @@ class TTTClient(LineReceiver):
             self.__screen.addLine('<< %s' % command)
         self.sendLine(command)
 
+
 class CursesStdIO:
     """fake fd to be registered as a reader with the twisted reactor.
        Curses classes needing input should extend this"""
@@ -191,6 +195,7 @@ class CursesStdIO:
     def logPrefix(self):
         return 'CursesClient'
 
+
 class Screen(CursesStdIO):
     def __init__(self, stdscr):
         self.timer = 0
@@ -201,10 +206,10 @@ class Screen(CursesStdIO):
         self.game_data = {}
 
         # set screen attributes
-        self.stdscr.nodelay(1) # this is used to make input calls non-blocking
+        self.stdscr.nodelay(1)  # this is used to make input calls non-blocking
         curses.cbreak()
         self.stdscr.keypad(1)
-        curses.curs_set(0)     # no annoying mouse cursor
+        curses.curs_set(0)  # no annoying mouse cursor
 
         self.rows, self.cols = self.stdscr.getmaxyx()
         self.lines = []
@@ -223,7 +228,7 @@ class Screen(CursesStdIO):
     def addLine(self, text):
         """ add a line to the internal list of lines"""
         if len(text) > self.cols:
-            text = text[0:self.cols-1]
+            text = text[0:self.cols - 1]
         self.lines.append(text)
         self.redisplayLines()
 
@@ -244,16 +249,16 @@ class Screen(CursesStdIO):
 
     def paintStatus(self, text):
         if len(text) > self.cols: raise TextTooLongError
-        self.stdscr.addstr(self.rows-2,0,text + ' ' * (self.cols-len(text)),
+        self.stdscr.addstr(self.rows - 2, 0, text + ' ' * (self.cols - len(text)),
                            curses.color_pair(1))
         # move cursor to input line
-        self.stdscr.move(self.rows-1, self.cols-1)
+        self.stdscr.move(self.rows - 1, self.cols - 1)
 
     def doRead(self):
         """ Input is ready! """
         curses.noecho()
         self.timer = self.timer + 1
-        c = self.stdscr.getch() # read a character
+        c = self.stdscr.getch()  # read a character
 
         if c == curses.KEY_BACKSPACE:
             self.searchText = self.searchText[:-1]
@@ -262,19 +267,21 @@ class Screen(CursesStdIO):
             self.addLine(self.searchText)
             # for testing too
             # self.client.process_key_input(self.searchText)
-            try: self.client.process_key_input(self.searchText)
-            except Exception as e: self.addLine(str(e))
+            try:
+                self.client.process_key_input(self.searchText)
+            except Exception as e:
+                self.addLine(str(e))
             self.stdscr.refresh()
             self.searchText = ''
 
         else:
-            if len(self.searchText) == self.cols-2: return
+            if len(self.searchText) == self.cols - 2: return
             self.searchText = self.searchText + chr(c)
 
-        self.stdscr.addstr(self.rows-1, 0,
+        self.stdscr.addstr(self.rows - 1, 0,
                            self.searchText + (' ' * (
-                           self.cols-len(self.searchText)-2)))
-        self.stdscr.move(self.rows-1, len(self.searchText))
+                               self.cols - len(self.searchText) - 2)))
+        self.stdscr.move(self.rows - 1, len(self.searchText))
         self.paintStatus(self.statusText + ' %d' % len(self.searchText))
         self.stdscr.refresh()
 
@@ -300,6 +307,7 @@ class Screen(CursesStdIO):
         curses.echo()
         curses.endwin()
 
+
 class TTTProtocolFactory(ClientFactory):
     def __init__(self, screen):
         self.__screen = screen
@@ -311,17 +319,13 @@ class TTTProtocolFactory(ClientFactory):
         pass
 
 
-
-# factory.protocol = TTTClient
-scr = curses.initscr()
-sobj = Screen(scr)
-scr.refresh()
-factory = TTTProtocolFactory(sobj)
-
-reactor.connectTCP("192.168.0.54", 8899, factory)
-reactor.run()
-
-
-
-# c = ClientCreator(reactor, TTTClient)
-# c.connectTCP("192.168.0.54", 8899).addCallback(got_protocol)
+if __name__ == '__main__':
+    scr = curses.initscr()
+    sobj = Screen(scr)
+    scr.refresh()
+    factory = TTTProtocolFactory(sobj)
+    host = "localhost"
+    if len(sys.argv) > 1:
+        host = sys.argv[1]
+    reactor.connectTCP(host, 8899, factory)
+    reactor.run()

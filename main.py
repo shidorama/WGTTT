@@ -16,6 +16,9 @@ user_protocols = {}
 
 
 class CQueue(deque):
+    """
+    Just a queue which is a little bit easier to use for me
+    """
     def push(self, value):
         self.appendleft(value)
 
@@ -29,8 +32,6 @@ class TTTServer(LineReceiver):
     GAME_STATE_PLAYING = 2
 
     def __init__(self):
-        # super(TTTServer, self).__init__()
-        # self.__manager = gm
         self.__kill_flag = False
         self.authorized = False
         self.__updated = time()
@@ -42,15 +43,25 @@ class TTTServer(LineReceiver):
         pass
 
     def connectionLost(self, reason=connectionDone):
+        """removes user from game manager on disconnect and from user_manager
+
+        :param reason:
+        :return:
+        """
         if self.__game_state in [self.GAME_STATE_PLAYING, self.GAME_STATE_QUEUE]:
             game_manager.drop_player(self.user.user_id)
         if self.authorized:
+            user_mananger.remove_user(self.user.user_id)
             user_mananger.protocols.pop(self.user.user_id)
 
     @staticmethod
     def packet_prepare(raw_data):
+        """Basic processing for incoming lines: json decoding
+
+        :param raw_data:
+        :return:
+        """
         try:
-            # data = b64decode(raw_data)
             data = raw_data
             data_object = loads(data)
         except Exception as e:

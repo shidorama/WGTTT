@@ -66,7 +66,7 @@ class Field(object):
 
 class Rules(object):
     def check_win_from_move(self, board, x, y):
-        """
+        """check if this move resulted in win
 
         :param board:
         :type board: Field
@@ -87,6 +87,11 @@ class Rules(object):
 
     @staticmethod
     def check_row_for_win(row):
+        """check if specific row will result in endgame
+
+        :param row:
+        :return:
+        """
         starter = row[0]
         if starter is None:
             return False
@@ -123,6 +128,13 @@ class Game(object):
         return self.make_move(CIRCLE, x, y)
 
     def make_move(self, sign, x, y):
+        """Place specified sign on a cell if it's available
+
+        :param sign:
+        :param x:
+        :param y:
+        :return:
+        """
         if sign not in [CROSS, CIRCLE]:
             return False
         if self.__last_move == sign:
@@ -183,6 +195,10 @@ class GameAI(User):
         self.__controller = controller
 
     def play(self):
+        """just randomly tries to make move until gets True
+
+        :return:
+        """
         result = False
         while not result:
             x = randint(0, 2)
