@@ -1,6 +1,8 @@
 from copy import deepcopy
-from settings import CIRCLE, CROSS
+from random import randint
 
+from settings import CIRCLE, CROSS
+from user import User
 
 
 class Field(object):
@@ -13,7 +15,7 @@ class Field(object):
     def __init__(self, size):
         self._field = [[None for i in range(size)] for x in range(size)]
         self._size = size
-        self._free_cells = size*size
+        self._free_cells = size * size
         pass
 
     def get_row(self, number):
@@ -93,6 +95,7 @@ class Rules(object):
                 return False
         return True
 
+
 class Game(object):
     GAME = 0
     WIN = 1
@@ -140,7 +143,48 @@ class Game(object):
     @property
     def state(self):
         return self.__state
-    
+
     @property
     def winner(self):
         return self.__win_by
+
+
+class GameAI(User):
+    SIZE = 3
+    name = 'AI'
+    stats = [0, 0, 0]
+    user_id = 'AI'
+
+    @property
+    def wins(self):
+        return 0
+
+    @wins.setter
+    def wins(self, value):
+        pass
+
+    @property
+    def ties(self):
+        return 0
+
+    @ties.setter
+    def ties(self, value):
+        pass
+
+    @property
+    def loses(self):
+        return 0
+
+    @loses.setter
+    def loses(self, value):
+        pass
+
+    def __init__(self, controller):
+        self.__controller = controller
+
+    def play(self):
+        result = False
+        while not result:
+            x = randint(0, 2)
+            y = randint(0, 2)
+            result = self.__controller('AI', x, y)

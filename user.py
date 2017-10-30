@@ -13,14 +13,17 @@ class User(object):
         self.ties = 0
         self.__id = user_id
         self.__name = 'User-%s' % randint(1,100000) # we can have same names, but I'm not particularly concerned right now
-        self.protocol = None
+
+    @property
+    def protocol(self):
+        return user_mananger.protocols.get(self.__id)
 
     @property
     def stats(self):
         win_ratio = 0
         lose_ratio = 0
         tie_ratio = 0
-        total = self.wins + self.loses + self.ties
+        total = float(self.wins + self.loses + self.ties)
         if self.wins != 0:
             win_ratio = self.wins / total
         if self.loses != 0:
@@ -46,6 +49,7 @@ class UserManager(object):
         self.__lobby = set()
         self.users = {}
         self.load_users()
+        self.protocols = {}
 
     def get_user_stats(self, user_id):
         if user_id in self.users:
@@ -72,20 +76,21 @@ class UserManager(object):
             except IOError as e:
                 raise
 
-    def register_new_user(self):
+    def register_new_user(self, protocol):
         user_id = uuid.uuid1().hex
         user = User(user_id)
         self.users[user_id] = user
         self.save_users()
-        self.auth_user(user_id)
+        self.auth_user(user_id, protocol)
         return user
 
-    def auth_user(self, user_id):
+    def auth_user(self, user_id, protocol):
         if user_id not in self.users:
             return False
         if user_id in self.__lobby:
             self.users[user_id].exit()
             self.__lobby.remove(user_id)
+        self.protocols[user_id] = protocol
         self.__lobby.add(user_id)
         return self.users[user_id]
 
