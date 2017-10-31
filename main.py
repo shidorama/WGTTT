@@ -38,6 +38,7 @@ class TTTServer(LineReceiver):
         self.__game_state = None
         self.__game_state_data = None
         self.user = None
+        self.death_timer = None
 
     def connectionMade(self):
         pass
@@ -69,16 +70,31 @@ class TTTServer(LineReceiver):
         return data_object
 
     def send_error(self, kill=False):
+        """Send generic error message and drop connection if needed
+
+        :param kill:
+        :return:
+        """
         self.__kill_flag = kill
         self.responder({"state": "error"})
 
     def lineReceived(self, line):
+        """Event that is called when full line received
+
+        :param line:
+        :return:
+        """
         data = self.packet_prepare(line)
         if data is False or not isinstance(data, dict):
             return self.send_error(True)
         self.proto_reactor(data)
 
     def proto_reactor(self, packet):
+        """Generic message reactor. It'll redirect message to more specific one depending on client state
+
+        :param packet:
+        :return:
+        """
         command = packet.get('cmd', None)
         if self.authorized:
             self.game_reactor(command, packet)
@@ -86,23 +102,32 @@ class TTTServer(LineReceiver):
             self.auth_reactor(command, packet)
 
     def start_game(self, state):
+        """called by GameManager instance, changes state of client and sends him starting state of game
+
+        :param state:
+        :return:
+        """
         if self.__game_state == self.GAME_STATE_QUEUE and self.authorized:
             self.__game_state = self.GAME_STATE_PLAYING
             self.responder(state)
 
     def game_reactor(self, command, packet):
+        """Reacts on command in authorized state: queueing for game or playing it
+
+        :param command:
+        :param packet:
+        :return:
+        """
         if self.__game_state == self.GAME_STATE_IDLE:
-            if command == 'state':
-                pass
-            elif command == 'queue':
+            if command == 'queue':
                 self.__game_state = self.GAME_STATE_QUEUE
                 self.cmd_state(command, True)
                 game_manager.queue_user(self.user)
         elif self.__game_state == self.GAME_STATE_QUEUE:
-            if command == 'state':
-                pass
+            pass
         elif self.__game_state == self.GAME_STATE_PLAYING:
             if command == 'move':
+                self.reset_death_timer()
                 schema = ExactSequence([int, int])
                 raw_pos = packet.get('pos')
                 position = self.check_data(raw_pos, schema)
@@ -110,14 +135,37 @@ class TTTServer(LineReceiver):
                     return self.responder(self.__game_state_data)
                 if not game_manager.make_move(self.user.user_id, *position):
                     return self.responder(self.__game_state_data)
-            elif command == 'game':
-                pass
-            pass
+                return self.cmd_state(command, True)
         else:
             self.send_error()
 
+    def reset_death_timer(self):
+        """resets or sets death time which will disconnect user if he becomes inactive
+
+        :return:
+        """
+        if self.death_timer:
+            self.death_timer.cancel()
+            self.death_timer = None
+        self.death_timer = reactor.callLater(settings.GAME_TIMEOUT, self.transport.loseConnection)
+
+    def stop_death_timer(self):
+        """stops disconnection timer for non-ingame states
+
+        :return:
+        """
+        if self.death_timer:
+            self.death_timer.cancel()
+            self.death_timer = None
+
     @staticmethod
     def check_data(data, schema):
+        """check if data received have structure and data needed
+
+        :param data:
+        :param schema:
+        :return:
+        """
         validator = Schema(schema, True)
         try:
             validator(data)
@@ -126,10 +174,22 @@ class TTTServer(LineReceiver):
         return data
 
     def cmd_state(self, cmd, ok=False):
+        """Prepares and sends simple response to command
+
+        :param cmd:
+        :param ok:
+        :return:
+        """
         data = {"cmd": cmd, "success": ok}
         self.responder(data)
 
     def auth_reactor(self, command, packet):
+        """Reactor for initial stages of client comm: unauthorized state. Register or tries to authenticate user
+
+        :param command:
+        :param packet:
+        :return:
+        """
         if command == 'auth':
             user_id = packet.get('user_id')
             result = user_mananger.auth_user(user_id, self)
@@ -151,40 +211,63 @@ class TTTServer(LineReceiver):
             self.send_error(True)
 
     def responder(self, data):
+        """prepares command object to send it to the client killing connection if needed
+
+        :param data:
+        :return:
+        """
         packet = dumps(data).encode()
-        self.transport.write(packet)
-        self.transport.write('\r\n')
+        self.sendLine(packet)
         if self.__kill_flag:
             self.transport.loseConnection()
 
     def send_game_update(self, data):
+        """Sends update of game state to the client
+
+        :param data:
+        :return:
+        """
+        self.reset_death_timer()
         self.__game_state_data = data
         self.responder(data)
 
     def end_game(self):
+        """stops disconnection timer and changes client state to 'idle"
+
+        :return:
+        """
+        self.stop_death_timer()
         self.__game_state = self.GAME_STATE_IDLE
 
 
 class GameManager():
     def __init__(self):
         self.queue = CQueue()
-        self.command_queue = CQueue()
         self.__game = None
         self.__players = {}
         self.__ai_countdown_started = None
         self.__ai_countdown_task = None
 
     def queue_user(self, user):
+        """pushes user at the end of the queue and tries to start game
+
+        :param user:
+        :type user: User
+        :return:
+        """
         # Check if there are more users and if they're not playing to start immediately
         self.queue.push(user)
         self.start_game()
 
     def start_game(self):
-        # try to start game with human
+        """Tries to start game by checking queue. If there is only one player and no game - start AI countdown
+
+        :return:
+        """
         if self.__game or self.queue.isEmpty():
             return False
         if len(self.queue) > 1:
-            self.reset_ai_timer()
+            self.cancel_ai_timer()
             self.__players = {settings.CROSS: self.queue.pop(), settings.CIRCLE: self.queue.pop()}
             self.__game = Game()
             game_state = self.game_state
@@ -195,10 +278,18 @@ class GameManager():
             self.start_ai_timer()
 
     def start_ai_timer(self):
+        """Creates timed call for AI game start
+
+        :return:
+        """
         self.__ai_countdown_started = time()
         self.__ai_countdown_task = reactor.callLater(settings.WAIT_TIMEOUT, self.start_ai_game)
 
-    def reset_ai_timer(self):
+    def cancel_ai_timer(self):
+        """stops timer that will start match with AI
+
+        :return:
+        """
         if self.__ai_countdown_task:
             self.__ai_countdown_started = None
             self.__ai_countdown_task.cancel()
@@ -215,6 +306,12 @@ class GameManager():
         return False
 
     def broadcast_update(self, state):
+        """checks update from game, send it to players if game is ended -> update player stats and calls endgame
+
+        :param state: game state
+        :type state: dict
+        :return:
+        """
         # Check what this update means (i.e. win, lose, tie)
         # If endgame -> drop players, Update stats for player
         # if AI -> defer move call
@@ -231,9 +328,12 @@ class GameManager():
             self.update_stats(self.__game.winner)
             self.endgame()
 
-        pass
-
     def update_stats(self, winner):
+        """update players statistics when game ends
+
+        :param winner:
+        :return:
+        """
         if winner is None:
             for player in self.__players.values():
                 player.ties += 1
@@ -246,6 +346,8 @@ class GameManager():
         user_mananger.save_users()
 
     def endgame(self):
+        """endgame event, updates player state, resets game manager game object and players list
+        """
         for player in self.__players.values():
             if not isinstance(player, GameAI):
                 player.protocol.end_game()
@@ -253,11 +355,11 @@ class GameManager():
         self.__game = None
         self.start_game()
 
-    def check_endgame(self):
-        if self.__game.state != Game.GAME:
-            return True
-
     def start_ai_game(self):
+        """Starts match with AI
+
+        :return:
+        """
         if not self.__game and len(self.queue) == 1:
             self.__players = {settings.CROSS: self.queue.pop(), settings.CIRCLE: GameAI(self.make_move)}
             self.__game = Game()
@@ -267,6 +369,11 @@ class GameManager():
 
     @property
     def game_state(self):
+        """forms game stat object which will be passed to clients
+
+        :return: state
+        :rtype: dict
+        """
         if not self.__game:
             return False
         game_ended = not (self.__game.state == Game.GAME)
@@ -283,6 +390,12 @@ class GameManager():
         return return_schema
 
     def drop_player(self, user_id):
+        """drops player from GameManager, resulting in other player win if in game
+
+        :param user_id:
+        :type user_id: str
+        :return:
+        """
         user = user_mananger.users.get(user_id)
         if not user:
             return False
@@ -307,10 +420,6 @@ class GameManager():
                     state['ended'] = True
                     self.__players[winner].protocol.send_game_update(state)
                 self.endgame()
-
-
-class VirtualPlayer():
-    pass
 
 
 if __name__ == '__main__':

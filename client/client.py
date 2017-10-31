@@ -30,7 +30,7 @@ class TTTClient(LineReceiver):
         self.stats = None
 
     def process_key_input(self, command):
-        """
+        """process input from console
 
         :param command:
         :type str:
@@ -52,9 +52,14 @@ class TTTClient(LineReceiver):
                 reactor.removeReader(sobj)
 
     def connectionLost(self, reason=connectionDone):
+        self.__screen.set_status_disconnected()
         self.__screen.addLine('Connection lost! Restart client')
 
     def connectionMade(self):
+        """tries to auth on connection
+
+        :return:
+        """
         creds = self.get_credentials()
         if not creds:
             command = {'cmd': 'reg'}
@@ -63,6 +68,11 @@ class TTTClient(LineReceiver):
         self.send_data(command)
 
     def lineReceived(self, line):
+        """parses data received and reacts on it
+
+        :param line:
+        :return:
+        """
         if DEBUG:
             self.__screen.addLine('>> %s' % line)
         data = self.parse_packet(line)
@@ -82,7 +92,6 @@ class TTTClient(LineReceiver):
             if self.state == self.STATE_IDLE:
                 self.idle_message()
                 self.__screen.set_status_idle(self.stats)
-
         elif self.state == self.STATE_QUEUE:
             if command == 'state':
                 self.state = self.STATE_GAME
@@ -102,9 +111,9 @@ class TTTClient(LineReceiver):
         elif self.state == self.STATE_GAME:
             if command == 'state':
                 finished = data.get('ended')
+                field = data.get('field')
+                self.draw_field(field)
                 if not finished:
-                    field = data.get('field')
-                    self.draw_field(field)
                     self.should_i_move(data)
                 else:
                     self.__screen.addLine('Game ended!')
@@ -123,12 +132,21 @@ class TTTClient(LineReceiver):
                     self.__screen.set_status_idle(self.stats)
 
     def should_i_move(self, data):
+        """If client should display prompt to move
+
+        :param data:
+        :return:
+        """
         if data.get('your_type') != data.get('last_turn'):
             self.__screen.addLine("It's your turn now!")
             self.__screen.addLine("Input number of row, then number of column (Like 'x y')")
             reactor.addReader(sobj)
 
     def idle_message(self):
+        """message that should be displayed when client enters idle state
+
+        :return:
+        """
         self.__screen.addLine('Press Q and press enter to enter gaming queue')
         reactor.addReader(sobj)
 
@@ -139,6 +157,11 @@ class TTTClient(LineReceiver):
         return val
 
     def draw_field(self, field):
+        """returns text representation of game field
+
+        :param field:
+        :return:
+        """
         delimiter = '    -*-*-*-'
         header = '     |0|1|2'
         lines = []
@@ -162,11 +185,20 @@ class TTTClient(LineReceiver):
         return data
 
     def save_credentials(self, user_id):
+        """saves game credentials on disk
+
+        :param user_id:
+        :return:
+        """
         credentials = {"user_id": user_id}
         with open(CREDENTIALS, 'w') as fp:
             dump(credentials, fp)
 
     def get_credentials(self):
+        """tries to load crdentials from disk
+
+        :return:
+        """
         if os.path.exists(CREDENTIALS):
             with open(CREDENTIALS, 'r') as fp:
                 creds = load(fp)
@@ -175,6 +207,11 @@ class TTTClient(LineReceiver):
         return False
 
     def send_data(self, data):
+        """sends data to server
+
+        :param data:
+        :return:
+        """
         command = dumps(data)
         if DEBUG:
             self.__screen.addLine('<< %s' % command)
@@ -199,7 +236,7 @@ class CursesStdIO:
 class Screen(CursesStdIO):
     def __init__(self, stdscr):
         self.timer = 0
-        self.statusText = "TEST CURSES APP -"
+        self.statusText = "Connecting....."
         self.searchText = ''
         self.stdscr = stdscr
         self.client = None
@@ -226,15 +263,17 @@ class Screen(CursesStdIO):
         self.close()
 
     def addLine(self, text):
-        """ add a line to the internal list of lines"""
+        """add a line to the internal list of lines and displays it
+        """
         if len(text) > self.cols:
             text = text[0:self.cols - 1]
         self.lines.append(text)
         self.redisplayLines()
 
     def redisplayLines(self):
-        """ method for redisplaying lines
-            based on internal list of lines """
+        """ method for redisplaying lines (refreshing screen)
+            based on internal list of lines
+        """
 
         self.stdscr.clear()
         self.paintStatus(self.statusText)
@@ -255,7 +294,7 @@ class Screen(CursesStdIO):
         self.stdscr.move(self.rows - 1, self.cols - 1)
 
     def doRead(self):
-        """ Input is ready! """
+        """ reads input from stdin and sends it to client """
         curses.noecho()
         self.timer = self.timer + 1
         c = self.stdscr.getch()  # read a character
@@ -264,9 +303,6 @@ class Screen(CursesStdIO):
             self.searchText = self.searchText[:-1]
 
         elif c == curses.KEY_ENTER or c == 10:
-            self.addLine(self.searchText)
-            # for testing too
-            # self.client.process_key_input(self.searchText)
             try:
                 self.client.process_key_input(self.searchText)
             except Exception as e:
@@ -286,6 +322,13 @@ class Screen(CursesStdIO):
         self.stdscr.refresh()
 
     def set_status_game(self, your_sign, stats, human=True):
+        """Sets status string when in game
+
+        :param your_sign:
+        :param stats:
+        :param human:
+        :return:
+        """
         opponent = 'AI'
         stats_template = 'W-{:.2%}, L-{:.2%}, T-{:.2%}'
         stats_string = stats_template.format(*stats)
@@ -296,7 +339,16 @@ class Screen(CursesStdIO):
         self.redisplayLines()
 
     def set_status_idle(self, stats):
+        """sets status when idle
+
+        :param stats:
+        :return:
+        """
         self.statusText = 'State: authorized. Your stats: W-{:.2%}, L-{:.2%}, T-{:.2%}'.format(*stats)
+        self.redisplayLines()
+
+    def set_status_disconnected(self):
+        self.statusText = '--- OFFLINE -- Ctrl+C to exit'
         self.redisplayLines()
 
     def close(self):
