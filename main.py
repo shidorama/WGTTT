@@ -154,7 +154,7 @@ class TTTServer(LineReceiver):
 
         :return:
         """
-        if self.death_timer:
+        if self.death_timer and self.death_timer.called != 1:
             self.death_timer.cancel()
             self.death_timer = None
 

@@ -4,7 +4,7 @@ from json import load, dump, loads, dumps
 
 import os
 import sys
-from twisted.internet import reactor
+from twisted.internet import reactor, task
 from twisted.internet.protocol import ClientFactory, connectionDone
 from twisted.protocols.basic import LineReceiver
 
@@ -28,6 +28,9 @@ class TTTClient(LineReceiver):
         self.__screen = screen
         self.__screen.client = self
         self.stats = None
+        screen_task = task.LoopingCall(self.__screen.updateTerminal)
+        screen_task.start(1.0)
+
 
     def process_key_input(self, command):
         """process input from console
@@ -45,11 +48,16 @@ class TTTClient(LineReceiver):
                 self.send_data(net_cmd)
                 reactor.removeReader(sobj)
         elif self.state == self.STATE_GAME:
-            cmd_pairs = [int(x) for x in command.split()]
+            try:
+                cmd_pairs = [int(x) for x in command.split()]
+            except ValueError as e:
+                cmd_pairs = []
             if len(cmd_pairs) == 2:
                 net_cmd = {"cmd": "move", "pos": cmd_pairs}
                 self.send_data(net_cmd)
                 reactor.removeReader(sobj)
+            else:
+                self.__screen.addLine('Error! Input 2 numbers separated by whitespace')
 
     def connectionLost(self, reason=connectionDone):
         self.__screen.set_status_disconnected()
@@ -141,6 +149,8 @@ class TTTClient(LineReceiver):
             self.__screen.addLine("It's your turn now!")
             self.__screen.addLine("Input number of row, then number of column (Like 'x y')")
             reactor.addReader(sobj)
+        else:
+            self.__screen.addLine("Hidden movements... Other player is thinking.")
 
     def idle_message(self):
         """message that should be displayed when client enters idle state
@@ -168,13 +178,18 @@ class TTTClient(LineReceiver):
         for i, val in enumerate(field):
             v = map(self.prepare_field_row, val)
             lines.append('    %s|%s|%s|%s' % (i, v[0], v[1], v[2]))
-        self.__screen.addLine(header)
-        self.__screen.addLine(delimiter)
-        self.__screen.addLine(lines[0])
-        self.__screen.addLine(delimiter)
-        self.__screen.addLine(lines[1])
-        self.__screen.addLine(delimiter)
-        self.__screen.addLine(lines[2])
+
+        new_field = [
+            header,
+            delimiter,
+            lines[0],
+            delimiter,
+            lines[1],
+            delimiter,
+            lines[2]
+        ]
+
+        self.__screen.drawField(new_field)
 
     @staticmethod
     def parse_packet(packet):
@@ -241,6 +256,8 @@ class Screen(CursesStdIO):
         self.stdscr = stdscr
         self.client = None
         self.game_data = {}
+        self.field = []
+        self.inGame = False
 
         # set screen attributes
         self.stdscr.nodelay(1)  # this is used to make input calls non-blocking
@@ -256,8 +273,14 @@ class Screen(CursesStdIO):
         # create color pair's 1 and 2
         curses.init_pair(1, curses.COLOR_BLACK, curses.COLOR_WHITE)
         curses.init_pair(2, curses.COLOR_CYAN, curses.COLOR_BLACK)
+        curses.init_pair(3, curses.COLOR_WHITE, curses.COLOR_MAGENTA)
 
         self.paintStatus(self.statusText)
+
+
+    def updateTerminal(self):
+        self.rows, self.cols = self.stdscr.getmaxyx()
+        self.redisplayLines()
 
     def connectionLost(self, reason):
         self.close()
@@ -274,17 +297,36 @@ class Screen(CursesStdIO):
         """ method for redisplaying lines (refreshing screen)
             based on internal list of lines
         """
-
+        self.rows, self.cols = self.stdscr.getmaxyx()
         self.stdscr.clear()
         self.paintStatus(self.statusText)
         i = 0
         index = len(self.lines) - 1
+        if self.field:
+            field = self.field
+        else:
+            field = ['','','','','','','']
+        field_banner = '===== GAME FIELD ====='
+        self.stdscr.addstr(self.rows - 10, 0, field_banner + ' ' * (self.cols - len(field_banner)),
+                           curses.color_pair(3))
+        for n in range(7):
+            self.stdscr.addstr(self.rows - 3 - n, 0, field[6-n] + ' ' * (self.cols - len(field[6-n])),
+                               curses.color_pair(3))
         while i < (self.rows - 3) and index >= 0:
-            self.stdscr.addstr(self.rows - 3 - i, 0, self.lines[index],
+            self.stdscr.addstr(self.rows - 11 - i, 0, self.lines[index] ,
                                curses.color_pair(2))
             i = i + 1
             index = index - 1
         self.stdscr.refresh()
+
+    def drawField(self, field):
+        """
+
+        :param field:
+        :return:
+        """
+        self.field = field
+        self.redisplayLines()
 
     def paintStatus(self, text):
         if len(text) > self.cols: raise TextTooLongError
